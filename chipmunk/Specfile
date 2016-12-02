@@ -1,0 +1,28 @@
+# $Id
+
+%define name udpxy-si
+%define version %{VERSION}
+%define release el%{?rhel}
+# Disable all post processing, including jar repacking
+%global __os_install_post %{nil}
+
+
+Name: %{name}
+Version: %{version}
+Release: %{release}
+Summary: SI Team Udpxy
+Group: Development/Tools
+License: None
+Source: http://cvs.voiceagenetworks.com/vcs/si/trunk/projects/performance/udpxy-si/
+Packager: Vantrix SI team <siteam@vantrix.com>
+Requires: glibc >= 2.14
+Autoreq: 0
+Autoprov: 0
+
+%description
+SI Team Udpxy
+
+%files
+%defattr(-,root,root,-)
+%{_prefix}/local/bin/udpxy
+%{_mandir}/man1/udpxy.1.gz

@@ -29,14 +29,11 @@ GZIP  := /bin/gzip
 MKDEPOPT := -MM
 DEBUG_ON := -g
 
-ALL_CFLAGS = -W -Wall -Werror --pedantic $(CFLAGS)
+ALL_FLAGS = -W -Wall -Werror --pedantic $(CFLAGS)
 
 SYSTEM=$(shell uname 2>/dev/null)
-ifneq (,$(filter $(SYSTEM),FreeBSD))
+ifeq ($(SYSTEM), FreeBSD)
 MAKE := gmake
-GZIP := /usr/bin/gzip
-endif
-ifneq (,$(filter $(SYSTEM),Darwin))
 GZIP := /usr/bin/gzip
 endif
 
@@ -46,8 +43,7 @@ BUILDNO := `cat $(BUILDFILE)`
 BTYPEFILE = BLDTYPE
 BTYPE := `cat $(BTYPEFILE) | tr -d '"'`
 
-VERSIONFILE = VERSION
-VERSION := `cat $(VERSIONFILE) | tr -d '"'`
+VERSION ?= $(notdir $(CURDIR))
 
 PATCHFILE = PATCH
 PATCHNO := `cat $(PATCHFILE)`
@@ -83,6 +79,9 @@ UDPXREC_MANPAGE_EN := doc/en/$(UDPXREC_MAN1)
 
 MANPAGE_DIR := $(DESTDIR)/usr/share/man/man1
 
+BASE := /usr/local/bin/
+BUILD := build/buildroot/
+
 DOCDIR := doc
 DOCFILES := *.txt $(DOCDIR)
 
@@ -100,7 +99,7 @@ DEPFILE := $(EXEC).dep
 CORES := core.* core
 
 .PHONY: clean distclean distro install uninstall all \
-debug ldebug rdebug lean verify touch incbuild 
+debug ldebug rdebug lean verify touch incbuild build rpm
 
 .c.o :
 	$(CC) $(ALL_CFLAGS) $(CPPFLAGS) $(CDEFS) $(COPT) -c $< -o $@
@@ -157,6 +156,7 @@ endif
 
 clean:
 	rm -f $(CORES) $(DEPFILE) $(OBJ) $(EXEC) $(UDPXREC)
+	rm -rf build
 
 distclean: clean
 
@@ -202,6 +202,24 @@ uninstall:
 	@rm -f $(INSTALLROOT)/bin/$(EXEC) $(INSTALLROOT)/bin/$(UDPXREC)
 	@rm -f $(MANPAGE_DIR)/$(UDPXY_MAN1).gz $(MANPAGE_DIR)/$(UDPXREC_MAN1).gz
 	@echo "udpxy successfully uninstalled"
+
+build: release
+	@echo "Building $(VERSION)"
+	@mkdir -p build/buildroot/$(BASE)
+	@cp udpxy build/buildroot/$(BASE)
+	@mkdir -p -m 755 build/buildroot/$(MANPAGE_DIR)
+	@$(GZIP) -c $(UDPXY_MANPAGE_EN) > build/buildroot/$(MANPAGE_DIR)/$(UDPXY_MAN1).gz
+
+rpm: build
+	        @echo "Creating RPM for version $(VERSION)"
+	        @rpmbuild -bb                            \
+	                --buildroot $(CURDIR)/build/buildroot    \
+	                --define="_rpmdir ./build"     \
+	                --define="__check_files false" \
+	                --define="VERSION $(VERSION)"  \
+	                --define="__prefix $(BASE)"  \
+	                --define="_target_os Linux"    \
+	                Specfile
 
 ifneq ($(MAKECMDGOALS), clean)
 -include $(DEPFILE)

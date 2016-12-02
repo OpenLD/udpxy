@@ -240,7 +240,6 @@ delete_client( struct server_ctx* ctx, pid_t cpid )
 
     client = &(ctx->cl[ index ]);
     client->pid = 0;
-    client->tail[0] = '\0';
 
     ctx->clfree++;
 
