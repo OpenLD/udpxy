@@ -1079,7 +1079,7 @@ get_sysinfo (int* perr)
 
     if (0 == rc) {
         s_sysinfo [sizeof(s_sysinfo)-1] = '\0';
-        (void) snprintf (s_sysinfo, sizeof(s_sysinfo)-1, "%s %s %s",
+        (void) snprintf (s_sysinfo, sizeof(s_sysinfo)-1, "%64s %64s %64s",
             uts.sysname, uts.release, uts.machine);
     }
     return s_sysinfo;

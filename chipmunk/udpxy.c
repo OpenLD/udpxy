@@ -57,6 +57,8 @@
 #include "uopt.h"
 #include "dpkt.h"
 #include "netop.h"
+#include "tsparser.h"
+#include "bitreader.h"
 
 /* external globals */
 
@@ -496,8 +498,14 @@ sync_dsockbuf_len( int ssockfd, int dsockfd )
  */
 static int
 relay_traffic( int ssockfd, int dsockfd, struct server_ctx* ctx,
-               int dfilefd, const struct in_addr* mifaddr, const struct in_addr* s_in_addr)
+               int dfilefd, const struct in_addr* mifaddr, const struct in_addr* s_in_addr,
+               const uint16_t program)
 {
+
+    char program_str[5] = "all\0\0";
+    if (program != 0)
+        snprintf(program_str, 5*sizeof(char), "%d", program);
+
     volatile sig_atomic_t quit = 0;
 
     int rc = 0;
@@ -506,6 +514,8 @@ relay_traffic( int ssockfd, int dsockfd, struct server_ctx* ctx,
             lrcv = 0, lsent = 0;
     char*  data = NULL;
     size_t data_len = g_uopt.rbuf_len;
+    char*  output = NULL;
+    size_t output_len = 0;
     struct rdata_opt ropt;
     time_t pause_time = 0, rfr_tm = time(NULL);
     sigset_t ubset;
@@ -578,8 +588,14 @@ relay_traffic( int ssockfd, int dsockfd, struct server_ctx* ctx,
             if( 0 != rc ) break;
         }
 
-        data = malloc(data_len);
+        data = calloc(0, data_len);
         if( NULL == data ) {
+            mperror( g_flog, errno, "%s: malloc", __func__ );
+            break;
+        }
+
+        output = calloc(0, data_len);
+        if( NULL == output ) {
             mperror( g_flog, errno, "%s: malloc", __func__ );
             break;
         }
@@ -589,8 +605,9 @@ relay_traffic( int ssockfd, int dsockfd, struct server_ctx* ctx,
     } while(0);
 
     TRACE( (void)tmfprintf( g_flog, "Relaying traffic from socket[%d] "
-            "to socket[%d], buffer size=[%d], Rmsgs=[%d], pauses=[%d]\n",
-            ssockfd, dsockfd, data_len, g_uopt.rbuf_msgs, ALLOW_PAUSES) );
+            "to socket[%d], buffer size=[%d], Rmsgs=[%d], pauses=[%d], "
+            "PID=[%s]\n",
+            ssockfd, dsockfd, data_len, g_uopt.rbuf_msgs, ALLOW_PAUSES, program_str) );
 
     /* RELAY LOOP
      */
@@ -598,6 +615,16 @@ relay_traffic( int ssockfd, int dsockfd, struct server_ctx* ctx,
     ropt.buf_tmout = g_uopt.dhold_tmout;
 
     pause_time = 0;
+
+    ABitReader bitReader;
+    uint16_t* stream_pids = (uint16_t*)calloc(6, sizeof(uint16_t));
+    uint16_t pmt_pid = 0;
+    int num_streams = 0;
+    int temp_pid = 0;
+    char input_buffer[188];
+    char* buffer_ptr = input_buffer;
+    char* data_ptr = data;
+    char* output_ptr = output;
 
     while( (0 == rc) && !(quit = must_quit()) ) {
         if( g_uopt.mcast_refresh > 0 ) {
@@ -607,12 +634,65 @@ relay_traffic( int ssockfd, int dsockfd, struct server_ctx* ctx,
         nrcv = read_data( &ds, ssockfd, data, data_len, &ropt );
         if( -1 == nrcv ) break;
 
+        output_ptr = output;
+
+        while (data_ptr < (data + data_len)) {
+            if (*data_ptr == TS_DISCONTINUITY) {
+                data_ptr++;
+                continue;
+            }
+            while (*data_ptr != 0x47) {
+                if (buffer_ptr == input_buffer) {
+                    continue;
+                }
+                *buffer_ptr = *data_ptr;
+                buffer_ptr++;
+                data_ptr++;
+            }
+            if (buffer_ptr == input_buffer) {
+                memcpy(input_buffer, data_ptr, 188 * sizeof(char));
+                data_ptr += 188;
+            } else {
+                buffer_ptr = input_buffer;
+            }
+
+            if (program == 0) {
+                memcpy(output_ptr, input_buffer, 188 * sizeof(char));
+                output_ptr += 188;
+                continue;
+            }
+
+            if (input_buffer[0] == TS_SYNC) {
+                memset(&bitReader, 0, sizeof(ABitReader));
+                initABitReader(&bitReader, (uint8_t*)input_buffer, nrcv);
+                if (num_streams == 0) {
+                    if (!pmt_pid) {
+                        pmt_pid = parse_packet(&bitReader, program, pmt_pid, NULL, NULL);
+                        continue;
+                    }
+                    parse_packet(&bitReader, program, pmt_pid, stream_pids, &num_streams);
+                    continue;
+                }
+                temp_pid = parse_packet(&bitReader, program, pmt_pid, stream_pids, &num_streams);
+                if (sendPid(temp_pid, stream_pids, &num_streams)) {
+                    memcpy(output_ptr, input_buffer, 188 * sizeof(char));
+                    output_ptr += 188;
+                } else {
+                    continue;
+                }
+            }
+        }
+
+        buffer_ptr = input_buffer;
+        data_ptr = data;
+        output_len = output_ptr - output;
+
         TRACE( check_fragments( "received new", data_len,
                     lrcv, nrcv, t_delta, g_flog ) );
         lrcv = nrcv;
 
-        if( dsockfd && (nrcv > 0) ) {
-            nsent = write_data( &ds, data, nrcv, dsockfd );
+        if( dsockfd && (output_len > 0) ) {
+            nsent = write_data( &ds, output, output_len, dsockfd );
             if( -1 == nsent ) break;
 
             if ( nsent < 0 ) {
@@ -626,8 +706,8 @@ relay_traffic( int ssockfd, int dsockfd, struct server_ctx* ctx,
             lsent = nsent;
         }
 
-        if( (dfilefd > 0) && (nrcv > 0) ) {
-            nwr = write_data( &ds, data, nrcv, dfilefd );
+        if( (dfilefd > 0) && (output_len > 0) ) {
+            nwr = write_data( &ds, output, output_len, dfilefd );
             if( -1 == nwr )
                 break;
             TRACE( check_fragments( "wrote to file",
@@ -649,6 +729,8 @@ relay_traffic( int ssockfd, int dsockfd, struct server_ctx* ctx,
 
     free_dstream_ctx( &ds );
     if( NULL != data ) free( data );
+    if( NULL != output ) free( output );
+    free(stream_pids);
 
     if( 0 != (quit = must_quit()) ) {
         TRACE( (void)tmfprintf( g_flog, "Child process=[%d] must quit\n",
@@ -669,6 +751,7 @@ udp_relay( int sockfd, struct server_ctx* ctx )
     char                src_addr[ IPADDR_STR_SIZE ];
     struct sockaddr_in  s_addr;
     struct sockaddr_in  m_addr;
+    uint16_t            program = 0;
 
     uint16_t    port;
     pid_t       new_pid;
@@ -686,7 +769,7 @@ udp_relay( int sockfd, struct server_ctx* ctx )
     TRACE( (void)tmfprintf( g_flog, "udp_relay : new_socket=[%d] param=[%s]\n",
                         sockfd, ctx->rq.param) );
     do {
-        rc = parse_udprelay( ctx->rq.param, src_addr, IPADDR_STR_SIZE, mcast_addr, IPADDR_STR_SIZE, &port );
+        rc = parse_udprelay( ctx->rq.param, src_addr, IPADDR_STR_SIZE, mcast_addr, IPADDR_STR_SIZE, &port, &program );
         if( 0 != rc ) {
             (void) tmfprintf( g_flog, "Error [%d] parsing parameters [%s]\n",
                             rc, ctx->rq.param );
@@ -787,7 +870,7 @@ udp_relay( int sockfd, struct server_ctx* ctx )
         }
         if( 0 != rc ) break;
 
-        rc = relay_traffic( srcfd, sockfd, ctx, dfilefd, mifaddr, &(s_addr.sin_addr) );
+        rc = relay_traffic( srcfd, sockfd, ctx, dfilefd, mifaddr, &(s_addr.sin_addr), program );
         if( 0 != rc ) break;
 
     } while(0);

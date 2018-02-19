@@ -160,11 +160,13 @@ int
 parse_udprelay( const char*  opt,
                 char* s_addr,       size_t s_addrlen,
                 char* m_addr,       size_t m_addrlen,
-                uint16_t* port )
+                uint16_t* port,
+                uint16_t* requested_program )
 {
     int rc = 1;
     size_t s_index;
     size_t m_index;
+    char* slash;
     int pval;
 
     const char* SEP = ":%~+-^";
@@ -177,6 +179,13 @@ parse_udprelay( const char*  opt,
 
     (void) strncpy( s, opt, MAX_OPTLEN );
     s[ MAX_OPTLEN - 1 ] = '\0';
+
+    slash = strchr(s, '/');
+    if (slash != NULL) {
+        *slash = '\0';
+        *requested_program = atoi(slash + 1);
+    }
+
     s_index = strcspn( s, "@" );
 
     /*If the n is not the original string size, then we have a match for SSM*/
@@ -190,6 +199,7 @@ parse_udprelay( const char*  opt,
       /*Reset the value of n if no SSM was found*/
       s_index = 0;
     }
+
 
     m_index = strcspn( s + s_index, SEP );
     strncpy( m_addr, s + s_index , m_index);

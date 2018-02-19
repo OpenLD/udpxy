@@ -82,7 +82,8 @@ int
 parse_udprelay( const char*  opt,
                 char* s_addr,       size_t s_addrlen,
                 char* m_addr,       size_t m_addrlen,
-                uint16_t* port );
+                uint16_t* port,
+                uint16_t* requested_program);
 
 #ifdef __cplusplus
 } /* extern "C" */

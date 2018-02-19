@@ -90,7 +90,7 @@ DOCDIR := doc
 DOCFILES := *.txt $(DOCDIR)
 
 SRC := udpxy.c sloop.c rparse.c util.c prbuf.c ifaddr.c ctx.c mkpg.c \
-	rtp.c uopt.c dpkt.c netop.c extrn.c main.c
+	rtp.c uopt.c dpkt.c netop.c extrn.c main.c tsparser.c bitreader.c
 
 ifneq (yes,$(NO_UDPXREC))
 	SRC   += udpxrec.c
